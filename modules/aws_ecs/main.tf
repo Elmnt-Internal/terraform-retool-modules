@@ -130,6 +130,13 @@ resource "aws_ecs_service" "workflows_backend" {
   service_registries {
     registry_arn = aws_service_discovery_service.retool_workflow_backend_service[0].arn
   }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.this.arn
+    container_name   = "retool"
+    container_port   = 3000
+  }
+
   dynamic "network_configuration" {
 
     for_each = var.launch_type == "FARGATE" ? toset([1]) : toset([])
