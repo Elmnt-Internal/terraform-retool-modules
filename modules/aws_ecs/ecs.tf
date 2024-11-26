@@ -49,10 +49,23 @@ resource "aws_launch_configuration" "this" {
   # This user data represents a collection of “scripts” that will be executed the first time the machine starts.
   # This specific example makes sure the EC2 instance is automatically attached to the ECS cluster that we create earlier
   # and marks the instance as purchased through the Spot pricing
-  user_data = <<-EOF
+  # user_data = <<-EOF
+  # #!/bin/bash
+  # echo ECS_CLUSTER=${var.deployment_name}-ecs >> /etc/ecs/ecs.config
+  # EOF
+   # Updated user data to be more explicit
+  user_data = base64encode(<<-EOF
   #!/bin/bash
   echo ECS_CLUSTER=${var.deployment_name}-ecs >> /etc/ecs/ecs.config
   EOF
+  )
+
+  # Add explicit root block device configuration
+  root_block_device {
+    volume_type = "gp3"
+    volume_size = 30
+    encrypted   = true
+  }
 
   # We’ll see security groups later
   security_groups = [
