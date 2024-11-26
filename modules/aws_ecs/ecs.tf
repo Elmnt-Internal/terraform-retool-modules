@@ -37,49 +37,44 @@ data "aws_ami" "this" {
   ]
 }
 
-resource "aws_launch_configuration" "this" {
-  count         = var.launch_type == "EC2" ? 1 : 0
-  name_prefix   = "${var.deployment_name}-ecs-launch-configuration-"
-  image_id      = data.aws_ami.this.id
-  instance_type = var.instance_type # e.g. t2.medium
+resource "aws_launch_template" "this" {
+  count = var.launch_type == "EC2" ? 1 : 0
+  
+  name_prefix   = "${var.deployment_name}-ecs-launch-template-"
+  instance_type = var.instance_type
+  
+  image_id = data.aws_ami.this.id
 
-  enable_monitoring           = true
-  associate_public_ip_address = true
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      volume_type = "gp3"
+      volume_size = 30
+      encrypted   = true
+    }
+  }
 
-  # This user data represents a collection of “scripts” that will be executed the first time the machine starts.
-  # This specific example makes sure the EC2 instance is automatically attached to the ECS cluster that we create earlier
-  # and marks the instance as purchased through the Spot pricing
-  # user_data = <<-EOF
-  # #!/bin/bash
-  # echo ECS_CLUSTER=${var.deployment_name}-ecs >> /etc/ecs/ecs.config
-  # EOF
-   # Updated user data to be more explicit
+  # Equivalent to previous launch configuration settings
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [aws_security_group.containers.id]
+  }
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ec2[0].name
+  }
+
+  key_name = var.ssh_key_name
+
   user_data = base64encode(<<-EOF
   #!/bin/bash
   echo ECS_CLUSTER=${var.deployment_name}-ecs >> /etc/ecs/ecs.config
   EOF
   )
 
-  # Add explicit root block device configuration
-  root_block_device {
-    volume_type = "gp3"
-    volume_size = 30
-    encrypted   = true
+  tags = {
+    Name = "${var.deployment_name}-ecs-launch-template"
   }
-
-  # We’ll see security groups later
-  security_groups = [
-    aws_security_group.containers.id
-  ]
-
-  # If you want to SSH into the instance and manage it directly:
-  # 1. Make sure this key exists in the AWS EC2 dashboard
-  # 2. Make sure your local SSH agent has it loaded
-  # 3. Make sure the EC2 instances are launched within a public subnet (are accessible from the internet)
-  key_name = var.ssh_key_name
-
-  # Allow the EC2 instances to access AWS resources on your behalf, using this instance profile and the permissions defined there
-  iam_instance_profile = aws_iam_instance_profile.ec2[0].arn
 
   lifecycle {
     create_before_destroy = true
@@ -93,7 +88,12 @@ resource "aws_autoscaling_group" "this" {
   min_size             = var.min_instance_count
   desired_capacity     = var.min_instance_count
   vpc_zone_identifier  = var.private_subnet_ids
-  launch_configuration = aws_launch_configuration.this[0].name
+
+  # Switch from launch_configuration to launch_template
+  launch_template {
+    id      = aws_launch_template.this[0].id
+    version = "$Latest"
+  }
 
   default_cooldown          = 30
   health_check_grace_period = 30
@@ -124,6 +124,81 @@ resource "aws_autoscaling_group" "this" {
     create_before_destroy = true
   }
 }
+
+# resource "aws_launch_configuration" "this" {
+#   count         = var.launch_type == "EC2" ? 1 : 0
+#   name_prefix   = "${var.deployment_name}-ecs-launch-configuration-"
+#   image_id      = data.aws_ami.this.id
+#   instance_type = var.instance_type # e.g. t2.medium
+
+#   enable_monitoring           = true
+#   associate_public_ip_address = true
+
+#   # This user data represents a collection of “scripts” that will be executed the first time the machine starts.
+#   # This specific example makes sure the EC2 instance is automatically attached to the ECS cluster that we create earlier
+#   # and marks the instance as purchased through the Spot pricing
+#   user_data = <<-EOF
+#   #!/bin/bash
+#   echo ECS_CLUSTER=${var.deployment_name}-ecs >> /etc/ecs/ecs.config
+#   EOF
+
+#   # We’ll see security groups later
+#   security_groups = [
+#     aws_security_group.containers.id
+#   ]
+
+#   # If you want to SSH into the instance and manage it directly:
+#   # 1. Make sure this key exists in the AWS EC2 dashboard
+#   # 2. Make sure your local SSH agent has it loaded
+#   # 3. Make sure the EC2 instances are launched within a public subnet (are accessible from the internet)
+#   key_name = var.ssh_key_name
+
+#   # Allow the EC2 instances to access AWS resources on your behalf, using this instance profile and the permissions defined there
+#   iam_instance_profile = aws_iam_instance_profile.ec2[0].arn
+
+#   lifecycle {
+#     create_before_destroy = true
+#   }
+# }
+
+# resource "aws_autoscaling_group" "this" {
+#   count                = var.launch_type == "EC2" ? 1 : 0
+#   name                 = "${var.deployment_name}-autoscaling-group"
+#   max_size             = var.max_instance_count
+#   min_size             = var.min_instance_count
+#   desired_capacity     = var.min_instance_count
+#   vpc_zone_identifier  = var.private_subnet_ids
+#   launch_configuration = aws_launch_configuration.this[0].name
+
+#   default_cooldown          = 30
+#   health_check_grace_period = 30
+
+#   termination_policies = [
+#     "OldestInstance"
+#   ]
+
+#   tag {
+#     key                 = "AmazonECSManaged"
+#     value               = ""
+#     propagate_at_launch = true
+#   }
+
+#   tag {
+#     key                 = "Cluster"
+#     value               = "${var.deployment_name}-ecs"
+#     propagate_at_launch = true
+#   }
+
+#   tag {
+#     key                 = "Name"
+#     value               = "${var.deployment_name}-ec2-instance"
+#     propagate_at_launch = true
+#   }
+
+#   lifecycle {
+#     create_before_destroy = true
+#   }
+# }
 
 # Attach an autoscaling policy to the spot cluster to target 70% MemoryReservation on the ECS cluster.
 resource "aws_autoscaling_policy" "this" {
